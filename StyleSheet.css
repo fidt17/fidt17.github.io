@@ -1,0 +1,76 @@
+body {
+	background-color: #252525;
+	font-family: courier;
+	text = #e8e6e2;
+}
+
+h1, h2, h3, h4, h5, p, li {
+	color: #e8e6e2;	
+}
+
+a {
+	color: #ffcc00;
+}
+
+.Top {
+	height: 170px;
+	background-color: #363636;
+	margin-left: 20%;
+	margin-right: 20%;
+}
+
+.Name, .Contacts {
+	display: inline-block;
+	vertical-align: top;
+}
+
+.Name {
+	width: 50%;
+	float: left;
+	text-align: center;
+}
+
+.Contacts {
+	width: 30%;
+	float: right;
+	text-align: left;
+}
+
+.Main {
+	margin-left: 22%;
+	margin-right: 22%;
+}
+
+.Projects {
+	margin-left: 20%;
+	margin-right: 20%;
+}
+
+.ProjectContainer {
+	display: inline-grid;
+  	grid-template-columns: auto auto;
+  	background-color: #2e3131;
+  	padding: 10px;
+  	height: 330px;
+  	margin: 10px;
+}
+
+.ProjectBox {
+	width: 75%;
+}
+
+.ProjectContent {
+	margin: auto;
+}
+
+.OtherProjectContainer {
+	display: inline-grid;
+  	grid-template-columns: auto auto;
+}
+
+.OtherProjectBox {
+	background-color: #2e3131;
+	width: 400px;
+	height: 230px;
+	margin: 10px;
+}
