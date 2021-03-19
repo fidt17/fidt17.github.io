@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Vladimir Korzh - CV</title>
+	<link rel="stylesheet" href="StyleSheet.css">
+</head>
+<body id="Foreground">
+
+	<div id="BrightBackground" style="height: 100px;">
+		<div style="text-align: center;
+					vertical-align: middle;
+					line-height: 100px;">
+			<h1>Pathfinding in grid-based RTS games</h1>
+		</div>
+	</div>
+
+	<div class="Main" id="Background">
+
+		<div style="padding: 10px;">
+			<h2>Оглавление</h2>
+			<ol>
+				<li><a href="#introduction"> Введение</a></li>
+				<li><a href="#problem"> Проблематика</a></li>
+				<li><a href="#graph"> Графы</a></li>
+				<li><a href="#astar"> A*</a></li>
+				<li><a href="#reverse"> Обратный поиск</a></li>
+				<li><a href="#hashset"> Hashset</a></li>
+				<li><a href="#minheap"> MinHeap</a></li>
+				<li><a href="#region"> Регионы</a></li>
+				<li><a href="#subregion"> Подрегионы</a></li>
+				<li><a href="#heuristic"> Эвристика</a></li>
+				<li><a href="#heuristic2"> Эвристика 2.0</a></li>
+				<li><a href="#results"> Итоги</a></li>
+			</ol>
+
+			<a name="introduction"></a>
+			<h2>Введение</h2>
+			<p>
+				Алгоритмы поисков путей в видеоиграх решают проблему нахождения кратчайшего пути из начальной точки в конечную. Быстрое нахождение такового является ключевым пунктом практически в любой RTS(real time strategy) игре.
+			</p>
+			<p>
+				Особенностью RTS игр является то, что игрок или ИИ контролирует множество персонажей постоянно, а не один раз за ход. На практике это значит, что система должна быть способна быстро просчитывать логику множества объектов (зачастую при очень большом количестве внешней и/или лишней информации).
+			</p>
+
+			<a name="problem"></a>
+			<h2>Проблематика поиска путей</h2>
+			<p>Для лучшего понимания проблемы предлагаю рассмотреть систему со следующими характеристиками.</p>
+			<ul>
+				<li>Игровой мир представляет собой поверхность, разделенную на клетки. На каждой клетке могут располагаться объекты, по которым перемещение как возможно (земля/дороги/…), так и невозможно(стены/скалы/вода). Клетка может иметь модификаторы скорости прохождения по ней. Например, передвижение по каменной кладке быстрее, чем передвижение по болоту.</li>
+				<br>
+				<li>Персонажами выступают люди/животные/… , обладающие своим собственным (ИИ) либо внешним контроллером (игрок). Персонажи могут свободно перемещаться по проходимым клеткам и выполнять действия в зависимости от задач поставленных перед ними (перенос вещей, сбор ягод с куста, постройка стен и т. д.).</li>
+			</ul>
+			<p>
+				Для решения проблемы поиска путей, очень часто разработчиками используются давно придуманные алгоритмы (A*, Dijkstra, BFS, Flowfield, …). Каждый из них хорошо подходит для одних условий, и является неудачным выбором в других.
+			</p>
+			<p>В каждом конкретном случае алгоритмы требуют соответствующих оптимизаций. Одной из самых важных модификаций является возможность определения существования пути без вычисления оного.</p>
+			<p>Прямой реализацией этого, может быть разделение карты на регионы, однако вычисление последних может быть крайне трудоемким процессом. Данная статья раскрывает потенциальные проблемы, которые могут поджидать разработчика, и предоставляет варианты их решения.</p>
+
+			<a name="graph"></a>
+			<h2>Графы</h2>
+			<p>Для отображения игровой карты можно использовать различные структуры данных, но чаще всего они являются частными случаями графа. Граф суть множество вершин/узлов и множество рёбер, соединяющих вершины.</p>
+			<p>Например, для прямоугольных карт, представленных в виде таблицы клеток, множеством вершин будет являться множество всех клеток на этой карте. Каждая клетка может как иметь (если клетка проходима), так и не иметь (если клетка не проходима) набор ребер, соединяющих соседние клетки.</p>
+			<div style="overflow:hidden">
+			  <div style="float: left;">
+				    <img src="content/img/Graph.png" style="width:300px; height:300px; padding-right: 20px;" />
+			  </div>
+			  <div style="text-align: center;">
+			    <div style="text-align: left;">
+			    	<p> В случае возможности передвижения как по вертикали/горизонтали, так и по диагонали узел может иметь до 8 ребер. Цена перемещения из одного узла в другой может складываться из разных параметров (расстояние до узла, сложность проходимости и т.д.)</p>
+			    </div>
+			  </div>
+			</div>
+
+			<a name="astar"></a>
+			<h2>A* Pathfinding Algorithm</h2>
+			<p>В рамках этой статьи я буду анализировать и улучшать довольно популярный алгоритм A* (A star), впервые опубликованный Питером Хартом, Нильсоном Нильсоном и Бертрамом Рафаэлем в 1968 году.</p>
+			<p>А* получает на вход граф карты, вершинами которого является структура Node, а также координаты начала и конца предполагаемого пути.</p>
+			<p>На выходе алгоритм возвращает список, состоящий из последовательных координат клеток, и являющийся кратчайшим путем из начальной точки в конечную, если такой существует.</p>
+			<p>Упомянутая выше структура Node выглядит следующим образом:</p>
+
+			<!-- -->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">class</span> <span style="color: #a6e22e">Node</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">X,</span> <span style="color: #f8f8f2">Y;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">bool</span> <span style="color: #f8f8f2">IsTraversable;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span>  <span style="color: #f8f8f2">gCost,</span> <span style="color: #f8f8f2">hCost;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span>  <span style="color: #f8f8f2">fCost</span> <span style="color: #f8f8f2">=&gt;</span> <span style="color: #f8f8f2">gCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">hCost;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #f8f8f2">Node</span> <span style="color: #f8f8f2">parent;</span>
+
+  <span style="color: #66d9ef">public</span> <span style="color: #a6e22e">Node</span><span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">x,</span> <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">y,</span> <span style="color: #66d9ef">bool</span> <span style="color: #f8f8f2">isTraversable)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">X</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">x;</span>
+    <span style="color: #f8f8f2">Y</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">y;</span>
+    <span style="color: #f8f8f2">IsTraversable</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">isTraversable;</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!-- -->
+
+			<p>Рассмотрим код алгоритма.</p>
+
+			<!-- -->
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">static</span> <span style="color: #f8f8f2">List&lt;Node&gt;</span> <span style="color: #f8f8f2">GetPath(Node</span> <span style="color: #f8f8f2">startNode,</span> <span style="color: #f8f8f2">Node</span> <span style="color: #f8f8f2">targetNode)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #f8f8f2">List&lt;Node&gt;</span> <span style="color: #f8f8f2">openSet</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">List&lt;Node&gt;();</span>
+  <span style="color: #f8f8f2">List&lt;Node&gt;</span> <span style="color: #f8f8f2">closedSet</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">List&lt;Node&gt;();</span>
+  <span style="color: #f8f8f2">openSet.Add(startNode);</span>
+  <span style="color: #66d9ef">while</span> <span style="color: #f8f8f2">(openSet.Count</span> <span style="color: #f8f8f2">&gt;</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">Node</span> <span style="color: #f8f8f2">currentNode</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">openSet[</span><span style="color: #ae81ff">0</span><span style="color: #f8f8f2">];</span>
+    <span style="color: #66d9ef">for</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">i</span> <span style="color: #f8f8f2">=</span> <span style="color: #ae81ff">1</span><span style="color: #f8f8f2">;</span> <span style="color: #f8f8f2">i</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">openSet.Count;</span> <span style="color: #f8f8f2">i++)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(openSet[i].fCost</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">currentNode.fCost)</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #f8f8f2">currentNode</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">openSet[i];</span>
+      <span style="color: #f8f8f2">}</span>
+    <span style="color: #f8f8f2">}</span>
+    <span style="color: #f8f8f2">openSet.Remove(currentNode);</span>
+    <span style="color: #f8f8f2">closedSet.Add(currentNode);</span>
+    
+
+    <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(currentNode</span> <span style="color: #f8f8f2">==</span> <span style="color: #f8f8f2">targetNode)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">return</span> <span style="color: #a6e22e">RetracePath</span><span style="color: #f8f8f2">(startNode,</span> <span style="color: #f8f8f2">targetNode);</span>
+    <span style="color: #f8f8f2">}</span>
+
+    <span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">neighbour</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">GetNeighbours(currentNode))</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(closedSet.Contains(neighbour))</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #66d9ef">continue</span><span style="color: #f8f8f2">;</span>
+      <span style="color: #f8f8f2">}</span>
+
+      <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">newCostToNeighbour</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currentNode.gCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">GetDistance(currentNode,</span> <span style="color: #f8f8f2">neighbour);</span>
+      <span style="color: #66d9ef">bool</span> <span style="color: #f8f8f2">isInOpenSet</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">openSet.Contains(neighbour);</span>
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(newCostToNeighbour</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">neighbour.gCost</span> <span style="color: #f8f8f2">||</span> <span style="color: #f8f8f2">!isInOpenSet)</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #f8f8f2">neighbour.gCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">newCostToNeighbour;</span>
+        <span style="color: #f8f8f2">neighbour.hCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">Heuristic(neighbour,</span> <span style="color: #f8f8f2">targetNode);</span>
+        <span style="color: #f8f8f2">neighbour.parent</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currentNode;</span>
+        <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(!isInOpenSet)</span> <span style="color: #f8f8f2">{</span>
+          <span style="color: #f8f8f2">openSet.Add(neighbour);</span>
+        <span style="color: #f8f8f2">}</span>
+      <span style="color: #f8f8f2">}</span>
+    <span style="color: #f8f8f2">}</span>
+  <span style="color: #f8f8f2">}</span>
+  <span style="color: #66d9ef">return</span> <span style="color: #66d9ef">null</span><span style="color: #f8f8f2">;</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+			<!-- -->
+
+			<p>Поиск начинается с создания двух списков openSet и closedSet.</p>
+			<p>openSet содержит все вершины, которые алгоритм еще не просмотрел. closedSet содержит все просмотренные вершины.</p>
+			<p>Алгоритм последовательно проходится по openSet, выбирая вершины с минимальным значением fCost. Выбранные вершины удаляются из открытого списка и заносятся в закрытый.</p>
+			<p>Далее обрабатываются все соседние вершины относительно выбранной и заносятся в openSet, если их нет ни в одном, ни в другом списке, вычисляя при этом два важных значения:</p>
+			<p>gCost - суммарное расстояние от начального узла до рассматриваемого соседа
+			hCost - значение эвристической функции относительно рассматриваемого соседа и конечной точки.</p>
+			<p>Когда очередная вершина оказывается конечной точкой, мы проходимся в обратном порядке 	от текущей вершины по её родителям и строим список, после чего “разворачиваем” его и 	получаем искомый путь.</p>
+			<p>Если в openSet закончились элементы, а путь при этом не был найден, то мы можем 	утверждать, что путь не существует.</p>
+			<p>Рассмотрим алгоритм пошагово на простом примере.</p>
+
+			<!---->
+
+			<div class="w3-content" style="margin-left: 20%; margin-right: 20%">
+			  <img class="a_slides" src="content/img/A-example/0.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/1.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/2.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/3.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/4.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/5.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/6.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/7.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/8.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/9.png" style="width:100%">
+			  <img class="a_slides" src="content/img/A-example/10.png" style="width:100%">
+			</div>
+
+			<div class="w3-center">
+			  <div class="w3-section" style="margin-left: 20%;">
+			    <button class="w3-button w3-light-grey" onclick="plusDivs(-1, a_slides)">❮ Prev</button>
+			    <button class="w3-button w3-light-grey" onclick="plusDivs(1, a_slides)">Next ❯</button>
+			  </div>
+			</div>
+
+			<script>
+			var a_slides = "a_slides";
+			var min_heap_add_slides = "min_heap_add_slides";
+			var min_heap_remove_slides = "min_heap_remove_slides";
+
+			var slideIndex = 1;
+			showDivs(slideIndex, a_slides);
+
+			function plusDivs(n, setName) {
+			  showDivs(slideIndex += n, setName);
+			}
+
+			function showDivs(n, setName) {
+			  var i;
+			  var x = document.getElementsByClassName(setName);
+			  var dots = document.getElementsByClassName("demo");
+			  if (n > x.length) {slideIndex = 1}    
+			  if (n < 1) {slideIndex = x.length}
+			  for (i = 0; i < x.length; i++) {
+			    x[i].style.display = "none";  
+			  }
+			  for (i = 0; i < dots.length; i++) {
+			    dots[i].className = dots[i].className.replace(" w3-red", "");
+			  }
+			  x[slideIndex-1].style.display = "block";  
+			  dots[slideIndex-1].className += " w3-red";
+			}
+			</script>
+
+			<!---->
+
+			<p>Данный алгоритм можно улучшить следующими способами.</p>
+			<ul>
+				<li>Обратный поиск</li>
+				<li>Структуры данных</li>
+				<li>Адаптация эвристики</li>
+			</ul>
+
+			<a name="reverse"></a> 
+			<h2>Обратный поиск</h2>
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1
+2
+3
+4
+5
+6
+7
+8
+9</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">private</span> <span style="color: #66d9ef">static</span> <span style="color: #f8f8f2">List&lt;Node&gt;</span> <span style="color: #f8f8f2">RetracePath(Node</span> <span style="color: #f8f8f2">startNode,</span> <span style="color: #f8f8f2">Node</span> <span style="color: #f8f8f2">currentNode)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #f8f8f2">List&lt;Node&gt;</span> <span style="color: #f8f8f2">path</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">List&lt;Node&gt;();</span>
+  <span style="color: #66d9ef">do</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">path.Add(currentNode);</span>
+    <span style="color: #f8f8f2">currentNode</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currentNode.parent;</span>
+  <span style="color: #f8f8f2">}</span> <span style="color: #66d9ef">while</span> <span style="color: #f8f8f2">(currentNode</span> <span style="color: #f8f8f2">!=</span> <span style="color: #f8f8f2">startNode);</span>
+  <span style="color: #f8f8f2">path.Reverse();</span>
+  <span style="color: #66d9ef">return</span> <span style="color: #f8f8f2">path;</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<p>На последнем шаге алгоритма, путь строится из конца в начало, последовательно проходя по родительским вершинам. Когда путь достроен, нам необходимо его развернуть в обратную сторону. Сложность функции List.Reverse() равна O(n), соответственно, чем длиннее путь, тем больше времени займет его разворот.</p>
+			<p>Этого маневра можно избежать, если мы изначально поменяем местами конечную точку с начальной. Тогда путь будет строиться из начала в конец в нужном порядке. Сам путь при этом будет в большинстве случаев идентичен.</p>
+			<p>Также этого можно добиться, если использовать на выходе не list, а stack. Суть не меняется, но, возможно, потребуется адаптация других элементов программы, запрашивающих этот путь.</p>
+
+			<a name="hashset"></a> 
+			<h2>HashSet</h2>
+			<p>Алгоритм использует closedSet лишь для двух вещей:</p>
+			<ul>
+				<li>Проверки существования элемента - сложность O(n)</li>
+				<li>Добавления нового элемента - сложность O(1)</li>
+			</ul>
+
+			<p>Списки предназначены по большей части для удобной итерации по множеству элементов. Чтобы определить, существует элемент в списке или нет, мы проходимся по каждому элементу, пока не встретим искомый или список не закончится.</p>
+
+			<p>В нашем случае известно, что каждая вершина присутствует в этом множестве в единичном экземпляре. Для оптимизации работы с closedSet имеет смысл вместо List использовать HashSet.</p>
+
+			<p>При добавлении нового элемента в HashSet генерируется код (hash), по которому можно быстро найти элемент в дальнейшем. Процесс генерации такого кода занимает некоторое время, однако, не беря во внимание крайние случаи, сложности добавления и проверки существования элемента равны O(1).</p>
+
+			<p>HashSet является отличной альтернативой спискам в данном случае, так как количество элементов в closedSet может быть огромным, а следовательно отношение времени поиска в HashSet’е к поиску элемента по списку можно считать тривиальным.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">HashSet&lt;Node&gt;</span> <span style="color: #f8f8f2">closedSet</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">HashSet&lt;Node&gt;();</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<a name="minheap"></a>
+			<h2>MinHeap</h2>
+			<p>Также алгоритму необходимо итерировать по элементам openSet, чтобы найти элемент с минимальным fCost. Здесь нам на помощь приходит MinHeap.</p>
+
+			<div style="overflow:hidden">
+			  <div style="float: left;">
+				    <img src="content/img/MinHeap/MinHeap.png" style="width:300px; height:250px; margin-right:20px;" />
+			  </div>
+			  <div style="text-align: center;">
+			    <div style="text-align: left;">
+			    	<p>
+				    <b>MinHeap</b> похоже на бинарное дерево, элементы которого отсортированы таким образом, что оба потомка одного узла должны быть больше либо равны родителю.
+			    	</p>
+			    </div>
+			  </div>
+			</div>
+
+			<p>При этом корень дерева является минимумом. А значит и нужда в поиске минимального элемента на каждой итерации алгоритма отпадает сама собой. Разумеется, структуру дерева нужно регулярно корректировать.</p>
+			<p>Реализация MinHeap обычно происходит с помощью одномерного массива. Зная индекс элемента в куче, можно вычислить индексы его родителя и детей:</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">parent:</span> <span style="color: #f8f8f2">(i-</span><span style="color: #ae81ff">1</span><span style="color: #f8f8f2">)/</span><span style="color: #ae81ff">2</span>
+<span style="color: #f8f8f2">left</span> <span style="color: #f8f8f2">child:</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">*i+</span><span style="color: #ae81ff">1</span>
+<span style="color: #f8f8f2">right</span> <span style="color: #f8f8f2">child:</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">*i+</span><span style="color: #ae81ff">2</span>
+</pre></div>
+
+
+
+			<!---->
+			<br>
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1
+2
+3
+4
+5
+6
+7
+8</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">class</span> <span style="color: #a6e22e">Heap</span><span style="color: #f8f8f2">&lt;T&gt;</span> <span style="color: #66d9ef">where</span> <span style="color: #f8f8f2">T</span> <span style="color: #f8f8f2">:</span> <span style="color: #f8f8f2">IHeapItem&lt;T&gt;</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">Count</span> <span style="color: #f8f8f2">{</span> <span style="color: #66d9ef">get</span><span style="color: #f8f8f2">;</span> <span style="color: #66d9ef">private</span> <span style="color: #66d9ef">set</span><span style="color: #f8f8f2">;</span> <span style="color: #f8f8f2">}</span>
+  <span style="color: #66d9ef">private</span> <span style="color: #f8f8f2">T[]</span> <span style="color: #f8f8f2">_items;</span>
+	
+  <span style="color: #66d9ef">public</span> <span style="color: #a6e22e">Heap</span><span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">maxSize)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">_items</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">T[maxSize];</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<p>После каждого добавления/удаления элемента кучу следует заново отсортировывать, а значит мы должны иметь возможность сравнивать два элемента. Для этого напишем вспомогательный интерфейс, который будет имплементировать Node.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1
+2
+3</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">interface</span> <span style="color: #f8f8f2">IHeapItem&lt;T&gt;</span> <span style="color: #f8f8f2">:</span> <span style="color: #f8f8f2">IComparable&lt;T&gt;</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">HeapIndex</span> <span style="color: #f8f8f2">{</span> <span style="color: #66d9ef">get</span><span style="color: #f8f8f2">;</span> <span style="color: #66d9ef">set</span><span style="color: #f8f8f2">;</span> <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<p>При сравнении двух Node нас интересует значение fCost.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">class</span> <span style="color: #a6e22e">Node</span> <span style="color: #f8f8f2">:</span> <span style="color: #f8f8f2">IHeapItem&lt;Node&gt;</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">X,</span> <span style="color: #f8f8f2">Y;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">bool</span> <span style="color: #f8f8f2">IsTraversable;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span>  <span style="color: #f8f8f2">gCost,</span> <span style="color: #f8f8f2">hCost;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span>  <span style="color: #f8f8f2">fCost</span> <span style="color: #f8f8f2">=&gt;</span> <span style="color: #f8f8f2">gCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">hCost;</span>
+  <span style="color: #66d9ef">public</span> <span style="color: #f8f8f2">Node</span> <span style="color: #f8f8f2">parent;</span>
+
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">HeapIndex</span> <span style="color: #f8f8f2">{</span> <span style="color: #66d9ef">get</span><span style="color: #f8f8f2">;</span> <span style="color: #66d9ef">set</span><span style="color: #f8f8f2">;</span> <span style="color: #f8f8f2">}</span>
+
+  <span style="color: #66d9ef">public</span> <span style="color: #a6e22e">Node</span><span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">x,</span> <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">y,</span> <span style="color: #66d9ef">bool</span> <span style="color: #f8f8f2">isTraversable)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">X</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">x;</span>
+    <span style="color: #f8f8f2">Y</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">y;</span>
+    <span style="color: #f8f8f2">IsTraversable</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">isTraversable;</span>
+  <span style="color: #f8f8f2">}</span>
+
+  <span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span> <span style="color: #a6e22e">CompareTo</span><span style="color: #f8f8f2">(Node</span> <span style="color: #f8f8f2">nodeToCompare)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">compare</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">fCost.CompareTo(nodeToCompare.fCost);</span>
+    <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(compare</span> <span style="color: #f8f8f2">==</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #f8f8f2">compare</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">hCost.CompareTo(nodeToCompare.hCost);</span>
+    <span style="color: #f8f8f2">}</span>
+    <span style="color: #66d9ef">return</span> <span style="color: #f8f8f2">-compare;</span>    
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<p>При добавлении элемент помещается в конец массива, после чего куча сортируется снизу-вверх, начиная с той ветки, куда был этот элемент помещен.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">void</span> <span style="color: #a6e22e">Add</span><span style="color: #f8f8f2">(T</span> <span style="color: #f8f8f2">item)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #f8f8f2">item.HeapIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">Count;</span>
+  <span style="color: #f8f8f2">_items[Count]</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">item;</span>
+  <span style="color: #f8f8f2">BubbleUp(item);</span>
+  <span style="color: #f8f8f2">Count++;</span>
+<span style="color: #f8f8f2">}</span>
+
+<span style="color: #66d9ef">private</span> <span style="color: #66d9ef">void</span> <span style="color: #a6e22e">BubbleUp</span><span style="color: #f8f8f2">(T</span> <span style="color: #f8f8f2">item)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">parentIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">(item.HeapIndex-</span><span style="color: #ae81ff">1</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">/</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">;</span>
+  <span style="color: #66d9ef">while</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">true</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">T</span> <span style="color: #f8f8f2">parentItem</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">_items[parentIndex];</span>
+    <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(item.CompareTo(parentItem)</span> <span style="color: #f8f8f2">&gt;</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #f8f8f2">Swap</span> <span style="color: #f8f8f2">(item,</span> <span style="color: #f8f8f2">parentItem);</span>
+    <span style="color: #f8f8f2">}</span> <span style="color: #66d9ef">else</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">break</span><span style="color: #f8f8f2">;</span>
+    <span style="color: #f8f8f2">}</span>
+    <span style="color: #f8f8f2">parentIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">(item.HeapIndex-</span><span style="color: #ae81ff">1</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">/</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">;</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+			<br>
+
+			<!---->
+
+			<div class="w3-content" style="margin-left: 20%; margin-right: 20%">
+			  <img class="min_heap_add_slides" src="content/img/MinHeap/ADD_0.png" style="width:100%">
+			  <img class="min_heap_add_slides" src="content/img/MinHeap/ADD_1.png" style="width:100%">
+			  <img class="min_heap_add_slides" src="content/img/MinHeap/ADD_2.png" style="width:100%">
+			</div>
+
+			<div class="w3-center">
+			  <div class="w3-section" style="margin-left: 20%;">
+			    <button class="w3-button w3-light-grey" onclick="plusDivs(-1, min_heap_add_slides)">❮ Prev</button>
+			    <button class="w3-button w3-light-grey" onclick="plusDivs(1, min_heap_add_slides)">Next ❯</button>
+			  </div>
+			</div>
+
+			<script>
+			showDivs(slideIndex, min_heap_add_slides);
+			</script>
+
+			<!---->
+
+			<p>При извлечении корня, а по совместительству минимального элемента, мы перемещаем элемент из конца кучи в начало и сортируем ее сверху вниз.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #f8f8f2">T</span> <span style="color: #a6e22e">RemoveFirst</span><span style="color: #f8f8f2">()</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #f8f8f2">T</span> <span style="color: #f8f8f2">first</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">_items[</span><span style="color: #ae81ff">0</span><span style="color: #f8f8f2">];</span>
+  <span style="color: #f8f8f2">Count--;</span>
+  <span style="color: #f8f8f2">_items[</span><span style="color: #ae81ff">0</span><span style="color: #f8f8f2">]</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">_items[Count];</span>
+  <span style="color: #f8f8f2">_items[</span><span style="color: #ae81ff">0</span><span style="color: #f8f8f2">].HeapIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">;</span>
+  <span style="color: #f8f8f2">BubbleDown(_items[</span><span style="color: #ae81ff">0</span><span style="color: #f8f8f2">]);</span>
+  <span style="color: #66d9ef">return</span> <span style="color: #f8f8f2">first;</span>
+<span style="color: #f8f8f2">}</span>
+
+<span style="color: #66d9ef">private</span> <span style="color: #66d9ef">void</span> <span style="color: #a6e22e">BubbleDown</span><span style="color: #f8f8f2">(T</span> <span style="color: #f8f8f2">item)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">while</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">true</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">leftChild</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">item.HeapIndex</span>  <span style="color: #f8f8f2">*</span> <span style="color: #ae81ff">2</span> <span style="color: #f8f8f2">+</span> <span style="color: #ae81ff">1</span><span style="color: #f8f8f2">;</span>
+    <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">rightChild</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">item.HeapIndex</span> <span style="color: #f8f8f2">*</span> <span style="color: #ae81ff">2</span> <span style="color: #f8f8f2">+</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">;</span>
+    <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">swapIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">;</span>
+
+    <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(leftChild</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">Count)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #f8f8f2">swapIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">leftChild;</span>
+
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(rightChild</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">Count</span> <span style="color: #f8f8f2">&amp;&amp;</span>
+         <span style="color: #f8f8f2">_items[leftChild].CompareTo(_items[rightChild])</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #f8f8f2">swapIndex</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">rightChild;</span>
+      <span style="color: #f8f8f2">}</span>
+
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(item.CompareTo(_items[swapIndex])</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #f8f8f2">Swap</span> <span style="color: #f8f8f2">(item,</span> <span style="color: #f8f8f2">_items[swapIndex]);</span>
+      <span style="color: #f8f8f2">}</span> <span style="color: #66d9ef">else</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #66d9ef">return</span><span style="color: #f8f8f2">;</span>
+      <span style="color: #f8f8f2">}</span>
+    <span style="color: #f8f8f2">}</span> <span style="color: #66d9ef">else</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">return</span><span style="color: #f8f8f2">;</span>
+    <span style="color: #f8f8f2">}</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<br>
+
+			<!---->
+
+			<div class="w3-content" style="margin-left: 20%; margin-right: 20%">
+			  <img class="min_heap_remove_slides" src="content/img/MinHeap/REMOVE_0.png" style="width:100%">
+			  <img class="min_heap_remove_slides" src="content/img/MinHeap/REMOVE_1.png" style="width:100%">
+			  <img class="min_heap_remove_slides" src="content/img/MinHeap/REMOVE_2.png" style="width:100%">
+			  <img class="min_heap_remove_slides" src="content/img/MinHeap/REMOVE_3.png" style="width:100%">
+			</div>
+
+			<div class="w3-center">
+			  <div class="w3-section" style="margin-left:20%">
+			    <button class="w3-button w3-light-grey" onclick="plusDivs(-1, min_heap_remove_slides)">❮ Prev</button>
+			    <button class="w3-button w3-light-grey" onclick="plusDivs(1, min_heap_remove_slides)">Next ❯</button>
+			  </div>
+			</div>
+
+			<script>
+			showDivs(1, min_heap_remove_slides);
+			</script>
+
+			<!---->
+			<p>Определение факта существования элемента в куче сводится к простой проверке по индексу.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1
+2
+3</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">bool</span> <span style="color: #a6e22e">Contains</span><span style="color: #f8f8f2">(T</span> <span style="color: #f8f8f2">item)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">return</span> <span style="color: #a6e22e">Equals</span><span style="color: #f8f8f2">(_items[item.HeapIndex],</span> <span style="color: #f8f8f2">item);</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<p>В случае, когда мы пришли к одному и тому же узлу разными путями, необходимо обновить значения gCost и ссылку на предыдущий узел в сторону более короткого пути. Поскольку предполагается, что подобные изменения будут происходить только в меньшую сторону, то после вычисления новых значений кучу следует отсортировать вверх, и тогда её структура будет оставаться корректной.</p>
+
+			<!---->
+
+			<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">...</span>
+<span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(newCostToNeighbour</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">neighbour.gCost</span> <span style="color: #f8f8f2">||</span> <span style="color: #f8f8f2">!isInOpenSet)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #f8f8f2">neighbour.gCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">newCostToNeighbour;</span>
+  <span style="color: #f8f8f2">neighbour.hCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">Heuristic(neighbour,</span> <span style="color: #f8f8f2">targetNode);</span>
+  <span style="color: #f8f8f2">neighbour.parent</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currentNode;</span>
+  <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(!isInOpenSet)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">openSet.Add(neighbour);</span>
+  <span style="color: #f8f8f2">}</span> <span style="color: #66d9ef">else</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">openSet.UpdateItem(neighbour);</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">...</span>
+</pre></td></tr></table></div>
+
+
+			<!---->
+
+			<p>Таким образом, использование MinHeap позволяет нам экономить время как на поиске элемента с минимальным fCost в openSet, так и на проверке существования элемента в нём.</p>
+
+			<h2>Сравнение скорости</h2>
+			<p>Проверка алгоритмов в данной части и последующих будет происходить на картах размеров 100х100 клеток. Время будет вычисляться по среднему значению 20 итераций, чтобы избежать возможных системных погрешностей.</p>
+
+			<div style="overflow:hidden">
+			    <div style="float: left;"><img src="content/img/map_examples/empty-map/default.png" style="width:150px; height:150px; padding-right: 20px;" />
+			    </div> 
+				<div><p><b> Стандартный A* </b> - 4.1 ms <br>
+				     <b> A* (Reverse Search, HashSet, MinHeap) </b> - 0.83 ms</p>
+				 </div>
+			</div>
+
+			<div style="overflow:hidden">
+			    <div style="float: left;"><img src="content/img/map_examples/random1/default.png" style="width:150px; height:150px; padding-right: 20px;" />
+			    </div> 
+				<div><p><b> Стандартный A* </b> - 80.16 ms <br>
+				     <b> A* (Reverse Search, HashSet, MinHeap) </b> - 5.06 ms</p>
+				 </div>
+			</div>
+
+			<div style="overflow:hidden">
+			    <div style="float: left;"><img src="content/img/map_examples/zig-zag/default.png" style="width:150px; height:150px; padding-right: 20px;" />
+			    </div>
+				<div><p><b> Стандартный A* </b> - 3160.87 ms <br>
+				     <b> A* (Reverse Search, HashSet, MinHeap) </b> - 26.27 ms</p>
+				 </div>
+			</div>
+
+
+		<a name="region"></a>
+		<h2>Регионы</h2>
+
+		<p>Рассмотрим следующую ситуацию.</p>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/gif/no_region_system_default.gif" style="width:300px; height:300px; padding-right: 20px;" />
+		  </div>
+		  <div style="text-align: center;">
+		    <div style="text-align: left;">
+			    <p>Прежде чем понять, что путь не существует, алгоритм должен рассмотреть все доступные клетки.</p>
+		    </div>
+		  </div>
+		</div>
+
+		<p>Для человека это очевидно и без сложных вычислений, так как мы видим, что точки начала и конца находятся в двух разных "комнатах". Проблема очевидна, решение, что я в дальнейшем опишу, можно назвать интерпретацией теории о компонентах связности графа, я же буду называть это "Системой регионов".</p>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/img/region/r_1.png" style="width:300px; height:150px; padding-right: 20px;" />
+		  </div>
+		  <div style="text-align: center;">
+		    <div style="text-align: left;">
+		    	<p>
+			    Компонента связности графа - суть множество вершин графа такое,
+			    что для любых двух вершин из этого множества существует путь из одной в другую,
+			    и не существует пути из вершины этого множества в вершину не из этого множества.</p>
+		    </div>
+		  </div>
+		</div>
+
+		<br>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/gif/flood-fill.gif" style="width:300px; height:300px; padding-right: 20px;" />
+		  </div>
+		  <div style="text-align: center;">
+		    <div style="text-align: left;">
+			    <p>Вычисление регионов я произвожу с помощью Flood Fill алгоритма, который, например, используется при заливке изображения в графических редакторах.</p>
+		    </div>
+		  </div>
+		</div>
+		<br>
+
+		<p>Реализация алгоритма на примере цветов. В реальной системе вместо уникальных цветов можно присваивать клетке ссылку на соответствующий регион, в котором она содержится.</p>
+
+		<!---->
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">static</span> <span style="color: #66d9ef">void</span> <span style="color: #a6e22e">FillMap</span><span style="color: #f8f8f2">()</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">for</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">x</span> <span style="color: #f8f8f2">=</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">;</span> <span style="color: #f8f8f2">x</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">MapWidth;</span> <span style="color: #f8f8f2">x++)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">for</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">y</span> <span style="color: #f8f8f2">=</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">;</span> <span style="color: #f8f8f2">y</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">MapHeight;</span> <span style="color: #f8f8f2">y++)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">n</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">NodeAt(x,</span> <span style="color: #f8f8f2">y);</span>
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(n.IsTraversable</span> <span style="color: #f8f8f2">&amp;&amp;</span> <span style="color: #f8f8f2">n.rColor</span> <span style="color: #f8f8f2">==</span> <span style="color: #f8f8f2">ReplacementColor)</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #f8f8f2">FloodFillFrom(n,</span> <span style="color: #f8f8f2">GetRandomColor());</span>
+      <span style="color: #f8f8f2">}</span> 
+    <span style="color: #f8f8f2">}</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+
+<span style="color: #66d9ef">private</span> <span style="color: #66d9ef">static</span> <span style="color: #66d9ef">void</span> <span style="color: #a6e22e">FloodFillFrom</span><span style="color: #f8f8f2">(Node</span> <span style="color: #f8f8f2">startNode,</span> <span style="color: #f8f8f2">Color</span> <span style="color: #f8f8f2">targetColor)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #f8f8f2">Queue&lt;Node&gt;</span> <span style="color: #f8f8f2">nodeQueue</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">Queue&lt;Node&gt;();</span>
+  <span style="color: #f8f8f2">nodeQueue.Enqueue(startNode);</span>
+  <span style="color: #f8f8f2">startNode.rColor</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">targetColor;</span>
+        
+  <span style="color: #66d9ef">while</span> <span style="color: #f8f8f2">(nodeQueue.Count</span> <span style="color: #f8f8f2">!=</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">n</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">nodeQueue.Dequeue().GetNeighbours())</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(n.IsTraversable</span> <span style="color: #f8f8f2">&amp;&amp;</span> <span style="color: #f8f8f2">n.rColor</span> <span style="color: #f8f8f2">==</span> <span style="color: #f8f8f2">ReplacementColor)</span> <span style="color: #f8f8f2">{</span>
+        <span style="color: #f8f8f2">n.rColor</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">targetColor;</span>
+        <span style="color: #f8f8f2">nodeQueue.Enqueue(n);</span>
+      <span style="color: #f8f8f2">}</span>
+    <span style="color: #f8f8f2">}</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+		<!---->
+
+		<p>Имея в арсенале новую структуру данных, очень просто можно решить показанную выше проблему. Достаточно перед запуском алгоритма делать проверку на совпадение клеток одному и тому же региону, и если таковая не прошла, можно быть уверенными, что пути не существует.</p>
+
+		<!---->
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1
+2
+3</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(startNode.Region</span> <span style="color: #f8f8f2">!=</span> <span style="color: #f8f8f2">targetNode.Region)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">return</span> <span style="color: #66d9ef">null</span><span style="color: #f8f8f2">;</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+		<!---->
+
+		<p>К сожалению, подобная реализация совершенно не подходит для игр\ситуаций, когда карта обновляется достаточно часто, и мы не можем позволить себе при каждом добавлении\удалении препятствия пересчитывать все регионы по новой. Не думаю, что нужно объяснять насколько это трудоемкий процесс - пробегаться по каждой клетке карты при всяком случае, особенно на достаточно больших картах.</p>
+
+		<p>Здесь нам на помощь приходит следующая структура данных, которую я прозвал Subregion.</p>
+
+		<a name="subregion"></a>
+		<h2>Подрегионы</h2>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/img/subregion/subregion_def.png" style="width:150px; height:150px; padding-right: 20px;" />
+		  </div>
+		  <div style="text-align: center;">
+		    <div style="text-align: left;">
+		    	<p>Разобьем нашу карту на чанки фиксированного размера. В данном случае для карты размером 100х100 клеток, чанк занимает квадрат размером 10х10 клеток.</p>
+		    </div>
+		  </div>
+		</div>
+
+		<br>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/img/subregion/subregion_split.png" style="width:150px; height:150px; padding-right: 20px;" />
+		  </div>
+		  <div style="text-align: center;">
+		    <div style="text-align: left;">
+		    	<p>В каждом из этих чанков воспользуемся описанным выше Flood Fill алгоритмом. Каждое разноцветное множество представляет собой <b>Subregion</b>, при этом каждый <b>Subregion</b> знает, какие другие подрегионы его окружают.</p>
+		    </div>
+		  </div>
+		</div>
+
+		<br>
+
+		<p>Обобщая выше описанное, мы имеем:</p>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/img/structure.png" style="width:300px; height:230px; padding-right: 20px;" />
+		  </div>
+		  <div style="text-align: center;">
+		    <div style="text-align: left;">
+		    	<p>
+				    <li><b>Map</b> - игровое поле </li>
+				    <li><b>Region</b> - непересекающиеся множества, на которые разбивается поле </li>    
+				    <li><b>Subregion</b> - непересекающиеся подмножества регионов, определенные внутри строго заданных чанков </li>    
+				    <li><b>Node</b> - вершины карты нашего графа </li>    
+			    </ul>
+			    </p>
+		    </div>
+		  </div>
+		</div>
+
+		<p>Имея на руках систему подрегионов, мы можем поступить следующим образом:</p>
+
+		<p>
+			<ol>
+				<li>Определяем, какой node изменил свое состояние проходимости</li>
+				<li>Находим subregion в котором содержится этот node</li>
+				<li>Удаляем найденный subregion, стираем информацию о нем у соседних подрегионов</li>
+				<li>Заново запускаем Flood Fill алгоритм внутри чанка и определяем новых соседей</li>
+				<li>Запускаем Flood Fill по всем подрегионам и определяем новые регионы.</li>
+			</ol>
+		</p>
+		<p>Если вышло так, что появившийся subregion имеет своими соседями подрегионы из разных регионов - производим слияние меньшего региона с большим.</p>
+		<p>Таким образом, мы очень значительно сокращаем количество времени на перерасчет регионов. Разумеется, в данном разделе, а также в последующих этот уровень абстракции можно увеличивать при необходимости (region -> subregion -> … -> sub…subregion -> node).</p>
+
+		<a name="heuristic"></a>
+		<h2>Эвристка</h2>
+		<p>Теперь, когда у нас есть система регионов и подрегионов, продолжим нашу работу над ускорением поиска пути.</p>
+
+		<!---->
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">Эвристический</span> <span style="color: #f8f8f2">алгоритм</span> <span style="color: #f8f8f2; background-color: #272822">—</span> <span style="color: #f8f8f2">алгоритм</span> <span style="color: #f8f8f2">решения</span> <span style="color: #f8f8f2">задачи,</span> <span style="color: #f8f8f2">включающий</span> <span style="color: #f8f8f2">практический</span> <span style="color: #f8f8f2">метод,</span>
+<span style="color: #f8f8f2">не</span> <span style="color: #f8f8f2">являющийся</span> <span style="color: #f8f8f2">гарантированно</span> <span style="color: #f8f8f2">точным</span> <span style="color: #f8f8f2">или</span> <span style="color: #f8f8f2">оптимальным.</span>
+</pre></div>
+
+
+		<!---->
+
+		<p>Исходя из данного определения, я предупреждаю - описанные ниже адаптации A* будут в некоторых случаях выполняться намного быстрее оригинала, однако путь может выйти как минимально коротким, так и несколько больше оптимального. У всего есть своя цена, как известно.</p>
+		<p>Немного отвлечёмся и подумаем о следующей ситуации. Вы молодой человек проживающий в Санкт-Петербурге в Петроградском районе, и тут вы решили навестить родителей, проживающих в Москве. Каковы ваши рассуждения о том, как попасть с вашего удобного дивана в Питере на не менее удобный в Москве?</p>
+		<p>Скорее всего, ваши рассуждения будут не: я сделаю один шаг вперед, два шага влево, открою дверь, сделаю два шага до лифта, …, открою дверь квартиры в Москве; верно?</p>
+		<p>Мы рассуждаем абстрактнее: я нахожусь в Питере, из Питера я могу попасть в Москву на самолете. я живу в петроградском районе, значит, я сяду в метро здесь и выйду на Московской, …</p>
+		<p>Думаю идею вы поняли - абстракция. Именно этого не хватает стандартной реализации A*. Например, критичность данной проблемы можно увидеть на следующей визуализации.</p>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/gif/spiral_default.gif" style="width:300px; height:300px; padding-right: 20px;" />
+			    <figcaption><p>A* - 43.89 ms</p></figcaption>
+		  </div>
+		  <div style="float: left;">
+			    <img src="content/gif/room_default.gif" style="width:300px; height:300px; padding-right: 20px;" />
+			    <figcaption><p>A* - 32.63 ms</p></figcaption>
+		  </div>
+		</div>
+
+		<p>Алгоритм не знает о том, что перед ним находится коридор, по которому ему следует идти. И хотя его деятельность может показаться нелогичной, спешу вас уверить - она абсолютно корректна.</p>
+
+		<p>Мы не можем предоставить алгоритму информацию о том, что перед ним спираль и нужно следовать внутрь ее, так как это довольно сложно вычислить, озираясь на все прочие возможные случаи. Однако мы можем предоставить алгоритму тот самый коридор, внутри которого он будет искать кратчайший путь.</p>
+
+		<p>Здесь мы и используем наши subregion’ы. Идея проста - мы ищем путь не на уровне клеток, но на уровне подрегионов. Найдя последний, передаем его стандартному алгоритму и разрешаем ему рассматривать лишь клетки, которые содержатся в этом коридоре.</p>
+
+		<!---->
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">...</span>
+<span style="color: #f8f8f2">List&lt;Subregion&gt;</span> <span style="color: #f8f8f2">subregions</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">AStarSubregionSearch.GetPath(startNode.subregion,</span> <span style="color: #f8f8f2">targetNode.subregion);</span>
+<span style="color: #f8f8f2">Node[]</span> <span style="color: #f8f8f2">possibleNodes</span> <span style="color: #f8f8f2">=</span> <span style="color: #66d9ef">new</span> <span style="color: #f8f8f2">Node[MapWidth</span> <span style="color: #f8f8f2">*</span> <span style="color: #f8f8f2">MapHeight];</span>
+<span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(Subregion</span> <span style="color: #f8f8f2">s</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">subregions)</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(Node</span> <span style="color: #f8f8f2">n</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">s.nodes)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">possibleNodes[n.X</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">n.Y</span> <span style="color: #f8f8f2">*</span> <span style="color: #f8f8f2">MapHeight]</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">n;</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">...</span>
+<span style="color: #66d9ef">foreach</span><span style="color: #f8f8f2">(</span><span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">neighbour</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">GetNeighbours(currentNode))</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(closedSet.Contains(neighbour)</span> <span style="color: #f8f8f2">||</span> <span style="color: #f8f8f2">possibleNodes[neighbour.X</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">neighbour.Y</span> <span style="color: #f8f8f2">*</span> <span style="color: #f8f8f2">MapHeight]</span> <span style="color: #f8f8f2">==</span> <span style="color: #66d9ef">null</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">continue</span><span style="color: #f8f8f2">;</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">...</span>
+</pre></td></tr></table></div>
+
+
+		<!---->
+
+		<p>И хотя технически, поиск по подрегионам такой же “глупый”, как и обычный поиск. Перед ним лежит значительно меньше subregion’ов, которые нужно просмотреть.</p>
+
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/gif/spiral_subsearch.gif" style="width:300px; height:300px; padding-right: 20px;" />
+			    <figcaption><p>A* + subregion search - 14.38 ms</p></figcaption>
+		  </div>
+		  <div style="float: left;">
+			    <img src="content/gif/room_subsearch.gif" style="width:300px; height:300px; padding-right: 20px;" />
+			    <figcaption><p>A* + subregion search - 2.5 ms</p></figcaption>
+		  </div>
+		</div>
+
+		<br>
+
+		<a name="heuristic2"></a>
+		<h2>Эвристика 2.0</h2>
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1
+2
+3</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">...</span>
+<span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span>  <span style="color: #f8f8f2">fCost</span> <span style="color: #f8f8f2">=&gt;</span> <span style="color: #f8f8f2">gCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">hCost;</span>
+<span style="color: #f8f8f2">...</span>
+</pre></td></tr></table></div>
+	
+		<p>Весь алгоритм до этого момента держался на минимизации fCost, где gCost - длина пути от текущей рассматриваемой точки до начала пути, hCost - эвристически вычисленное значение расстояния от рассматриваемой точки до конца предполагаемого пути.</p>
+
+		<p>Следующая модификация алгоритма зиждется на добавлении ещё одного слагаемого при вычислении fCost, - rCost расстояние от рассматриваемой точки до определенной точки в следующем по счету подрегионе в упомянутом выше коридоре.</p>
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%">1</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">int</span>  <span style="color: #f8f8f2">fCost</span> <span style="color: #f8f8f2">=&gt;</span> <span style="color: #f8f8f2">gCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">hCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">rCost;</span>
+</pre></td></tr></table></div>
+	
+		<p>Перед тем как мы сможем это сделать, стоит определиться, какую точку в подрегионе выбирать для этого. Поэкспериментировав. я пришел к следующему варианту:</p>
+
+		<!---->
+
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">public</span> <span style="color: #66d9ef">class</span> <span style="color: #a6e22e">Subregion</span> <span style="color: #f8f8f2">{</span>
+<span style="color: #f8f8f2">...</span>
+
+<span style="color: #66d9ef">public</span> <span style="color: #66d9ef">void</span> <span style="color: #a6e22e">CalculateAverageCoordinates</span><span style="color: #f8f8f2">()</span> <span style="color: #f8f8f2">{</span>  
+  <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">minSqrDistance</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">Int32.MaxValue;</span>
+  <span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">node</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">nodes)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">currSqrDistance</span> <span style="color: #f8f8f2">=</span> <span style="color: #ae81ff">0</span><span style="color: #f8f8f2">;</span>
+    <span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">border</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">nodes)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">dX</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">(border.X</span> <span style="color: #f8f8f2">&gt;=</span> <span style="color: #f8f8f2">node.X)</span> <span style="color: #f8f8f2">?</span> <span style="color: #f8f8f2">border.X</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">node.X</span> <span style="color: #f8f8f2">:</span> <span style="color: #f8f8f2">node.X</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">border.X;</span>
+      <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">dY</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">(border.Y</span> <span style="color: #f8f8f2">&gt;=</span> <span style="color: #f8f8f2">node.Y)</span> <span style="color: #f8f8f2">?</span> <span style="color: #f8f8f2">border.Y</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">node.Y</span> <span style="color: #f8f8f2">:</span> <span style="color: #f8f8f2">node.Y</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">border.Y;</span>
+      <span style="color: #f8f8f2">currSqrDistance</span> <span style="color: #f8f8f2">+=</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">int</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">(Mathf.Pow(dX,</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">)</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">Mathf.Pow(dY,</span> <span style="color: #ae81ff">2</span><span style="color: #f8f8f2">));</span>
+    <span style="color: #f8f8f2">}</span>
+
+    <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(currSqrDistance</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">minSqrDistance)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #f8f8f2">minSqrDistance</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currSqrDistance;</span>
+      <span style="color: #f8f8f2">avgX</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">node.X;</span>
+      <span style="color: #f8f8f2">avgY</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">node.Y;</span>
+    <span style="color: #f8f8f2">}</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">...</span>
+</pre></td></tr></table></div>
+
+
+		<!---->
+
+		<p>Теперь rCost - расстояние от рассматриваемой точки до точки с координатами (avgX, avgY) следующего по порядку subregion’а. Эта точка обладает минимальным расстоянием до всех других точке в этом подрегионе.</p>
+
+		<p>Чтобы использовать rCost и следить за тем, какой подрегион у нас следующий, необходимо немного модифицировать прежний код. На самом деле модификаций нужно проделать намного больше, но чтобы не мучить читателя полотнами кода, я не стану указывать все.</p>
+
+		<!---->
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><table><tr><td><pre style="margin: 0; line-height: 125%"> 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27</pre></td><td><pre style="margin: 0; line-height: 125%"><span style="color: #66d9ef">foreach</span> <span style="color: #f8f8f2">(</span><span style="color: #66d9ef">var</span> <span style="color: #f8f8f2">neighbour</span> <span style="color: #66d9ef">in</span> <span style="color: #f8f8f2">GetNeighbours(currentNode))</span> <span style="color: #f8f8f2">{</span>
+  <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(closedSet.Contains(neighbour))</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">continue</span><span style="color: #f8f8f2">;</span>
+  <span style="color: #f8f8f2">}</span>
+                    
+  <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(subregions.Count</span> <span style="color: #f8f8f2">!=</span> <span style="color: #ae81ff">0</span> <span style="color: #f8f8f2">&amp;&amp;</span> <span style="color: #f8f8f2">subregions.Peek().child</span> <span style="color: #f8f8f2">==</span> <span style="color: #f8f8f2">neighbour.subregion)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">subregions.Pop();</span>
+  <span style="color: #f8f8f2">}</span>
+                    
+  <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(closedSet.Contains(neighbour)</span> <span style="color: #f8f8f2">||</span> <span style="color: #f8f8f2">(subregions.Count</span> <span style="color: #f8f8f2">!=</span> <span style="color: #ae81ff">0</span> <span style="color: #f8f8f2">&amp;&amp;</span> <span style="color: #f8f8f2">!subregions.Peek().nodes.Contains(neighbour)))</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #66d9ef">continue</span><span style="color: #f8f8f2">;</span>
+  <span style="color: #f8f8f2">}</span>
+   
+
+  <span style="color: #66d9ef">int</span> <span style="color: #f8f8f2">newCostToNeighbour</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currentNode.gCost</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">GetDistance(currentNode,</span> <span style="color: #f8f8f2">neighbour);</span>
+  <span style="color: #66d9ef">bool</span> <span style="color: #f8f8f2">isInOpenSet</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">openSet.Contains(neighbour);</span>
+  <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(newCostToNeighbour</span> <span style="color: #f8f8f2">&lt;</span> <span style="color: #f8f8f2">neighbour.gCost</span> <span style="color: #f8f8f2">||</span> <span style="color: #f8f8f2">!isInOpenSet)</span> <span style="color: #f8f8f2">{</span>
+    <span style="color: #f8f8f2">neighbour.gCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">newCostToNeighbour;</span>
+    <span style="color: #f8f8f2">neighbour.hCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">Heuristic(neighbour,</span> <span style="color: #f8f8f2">targetNode);</span>
+    <span style="color: #f8f8f2">neighbour.rCost</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">GetDistance(neighbour,</span> <span style="color: #f8f8f2">PathGrid.NodeAt(neighbour.subregion.child.avergX,</span> <span style="color: #f8f8f2">neighbour.subregion.child.avergY));</span>
+    <span style="color: #f8f8f2">neighbour.parent</span> <span style="color: #f8f8f2">=</span> <span style="color: #f8f8f2">currentNode;</span>
+
+    <span style="color: #66d9ef">if</span> <span style="color: #f8f8f2">(!isInOpenSet)</span> <span style="color: #f8f8f2">{</span>
+      <span style="color: #f8f8f2">openSet.Add(neighbour);</span>
+    <span style="color: #f8f8f2">}</span>
+  <span style="color: #f8f8f2">}</span>
+<span style="color: #f8f8f2">}</span>
+</pre></td></tr></table></div>
+
+
+		<!---->
+
+		<p>Это нововведение дает следующие результаты:</p>
+
+		<div style="overflow:hidden">
+		  <div style="float: left;">
+			    <img src="content/gif/spiral_rcost.gif" style="width:300px; height:300px; padding-right: 20px;" />
+			    <figcaption><p>A* + rCost - 3.20 ms</p></figcaption>
+		  </div>
+		  <div style="float: left;">
+			    <img src="content/gif/room_rcost.gif" style="width:300px; height:300px; padding-right: 20px;" />
+			    <figcaption><p>A* + rCost - 1.60 ms</p></figcaption>
+		  </div>
+		</div>
+
+		<br>
+
+		<a name="results"></a>
+		<h2>Итоги</h2>
+		<p>Уверен, вам понравились gif’ки выше, поэтому я подготовил еще ряд.</p>
+
+		<!-- HTML generated using hilite.me --><div style="background: #272822; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;"><pre style="margin: 0; line-height: 125%"><span style="color: #f8f8f2">A*</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">стандартный</span> <span style="color: #f8f8f2">A*</span>
+<span style="color: #f8f8f2">A*</span> <span style="color: #f8f8f2">+</span> <span style="color: #f8f8f2">DS</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">A*</span> <span style="color: #f8f8f2">с</span> <span style="color: #f8f8f2">использованием</span> <span style="color: #f8f8f2">структур</span>
+<span style="color: #f8f8f2">Subregion</span> <span style="color: #f8f8f2">search</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">A*</span> <span style="color: #f8f8f2">с</span> <span style="color: #f8f8f2">поиском</span> <span style="color: #f8f8f2">по</span> <span style="color: #f8f8f2">подрегионам</span>
+<span style="color: #f8f8f2">rCost</span> <span style="color: #f8f8f2">search</span> <span style="color: #f8f8f2">-</span> <span style="color: #f8f8f2">A*</span> <span style="color: #f8f8f2">с</span> <span style="color: #f8f8f2">rCost</span>
+</pre></div>
+
+
+		<div style="
+					display: inline-grid;
+				  	grid-template-columns: auto auto auto;
+
+				  	background-color: #3b4252;
+
+				  	margin-top: 10px;
+				  	margin-left: 20%;">
+			
+			<div style="overflow:hidden">
+			  <div style="float: left; padding-right: 10px;">
+				    <img src="content/gif/results/random_ds.gif" style="width:200px; height:200px;" />
+				    <figcaption><p>A* - 608 ms<br>A* + DS - 17.27 ms</p></figcaption>
+			  </div>
+			  <div style="float: left; padding-right: 10px;">
+				    <img src="content/gif/results/random_subsearch.gif" style="width:200px; height:200px;" />
+				    <figcaption><p>Subregion search - 4.53 ms</p></figcaption>
+			  </div>
+			  <div style="float: left;">
+				    <img src="content/gif/results/random_rcost.gif" style="width:200px; height:200px;" />
+				    <figcaption><p>rCost search - 3.26 ms</p></figcaption>
+			  </div>
+			</div>
+		</div>
+
+		<div style="
+					display: inline-grid;
+				  	grid-template-columns: auto auto auto;
+
+				  	background-color: #3b4252;
+
+				  	margin-top: 10px;
+				  	margin-left: 20%;">
+			<div style="float: left; padding-right: 10px;">
+				    <img src="content/gif/results/zig-zag_ds.gif" style="width:200px; height:200px;" />
+				    <figcaption><p>A* - 3112 ms<br>A* + DS - 26.43 ms</p></figcaption>
+			</div>
+			<div style="float: left; padding-right: 10px;">
+				    <img src="content/gif/results/zig-zag_subsearch.gif" style="width:200px; height:200px;" />
+				    <figcaption><p>Subregion search - 35.68 ms</p></figcaption>
+			</div>
+			<div style="float: left;">
+				    <img src="content/gif/results/zig-zag_rcost.gif" style="width:200px; height:200px;" />
+				    <figcaption><p>rCost search - 10.91 ms</p></figcaption>
+			</div>
+		</div>
+
+		<div style="
+					display: inline-grid;
+				  	grid-template-columns: auto auto auto;
+
+				  	background-color: #3b4252;
+
+				  	margin-top: 10px;
+				  	margin-left: 20%;">
+				  	  <div style="float: left;padding-right: 10px;">
+						    <img src="content/gif/results/wall_ds.gif" style="width:200px; height:200px; padding-right: 5px;" />
+						    <figcaption><p>A* - 752 ms<br>A* + DS - 19.37 ms</p></figcaption>
+					  </div>
+					  <div style="float: left;padding-right: 10px;">
+						    <img src="content/gif/results/wall_subsearch.gif" style="width:200px; height:200px; padding-right: 5px;" />
+						    <figcaption><p>Subregion search - 4.90 ms</p></figcaption>
+					  </div>
+					  <div style="float: left;">
+						    <img src="content/gif/results/wall_rcost.gif" style="width:200px; height:200px; padding-right: 5px;" />
+						    <figcaption><p>rCost search - 1.78 ms</p></figcaption>
+					  </div>
+		</div>
+
+		<div style="
+					display: inline-grid;
+				  	grid-template-columns: auto auto auto;
+
+				  	background-color: #3b4252;
+
+				  	margin-top: 10px;
+				  	margin-left: 20%;">
+				  	  <div style="float: left;padding-right: 10px;">
+						    <img src="content/gif/results/sup_ds.gif" style="width:200px; height:200px; padding-right: 5px;" />
+						    <figcaption><p>A* - 4252 ms<br>A* + DS - 45.12 ms</p></figcaption>
+					  </div>
+					  <div style="float: left;padding-right: 10px;">
+						    <img src="content/gif/results/sup_subsearch.gif" style="width:200px; height:200px; padding-right: 5px;" />
+						    <figcaption><p>Subregion search - 9.26 ms</p></figcaption>
+					  </div>
+					  <div style="float: left;">
+						    <img src="content/gif/results/sup_rcost.gif" style="width:200px; height:200px; padding-right: 5px;" />
+						    <figcaption><p>rCost search - 3.13 ms</p></figcaption>
+					  </div>
+		</div>
+
+		<p>Спасибо за чтение.</p>
+		<p>Vladimir Korzh, 2020</p>
+
+		<hr>
+		<p>Отдельное спасибо Tynan Sylvester за вдохновение и видео о его "Region System" - <a href="https://www.youtube.com/watch?v=RMBQn_sg7DA">link</a></p>
+
+	</div>
+</body>
+</html>

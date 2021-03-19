@@ -4,24 +4,36 @@ body {
 	text = #e8e6e2;
 }
 
-h1, h2, h3, h4, h5, p, li {
-	color: #e8e6e2;	
+h1, h2, h3, h4, h5, p, li, b {
+	color: #d8dee9;	
+}
+
+hr {
+	background-color: #3b4252;
 }
 
 a {
-	color: #ffcc00;
+	color: #88c0d0;
+}
+
+#Background {
+	background-color: #2e3440;
+}
+
+#BrightBackground {
+	background-color: #3b4252;
+}
+
+#DarkBackground {
+	background-color: #323232;
+}
+
+#Foreground {
+	background-color: #323846;
 }
 
 .Top {
-	height: 170px;
-	background-color: #363636;
-	margin-left: 20%;
-	margin-right: 20%;
-}
-
-.Name, .Contacts {
-	display: inline-block;
-	vertical-align: top;
+	height: 200px;
 }
 
 .Name {
@@ -37,8 +49,23 @@ a {
 }
 
 .Main {
-	margin-left: 22%;
-	margin-right: 22%;
+	margin-left: 20%;
+	margin-right: 20%;
+	margin-top: 10px;
+
+	border-style: solid;;
+	border-width: 2px;
+	border-color: #323232;
+}
+
+.MainWide {
+	margin-left: 10%;
+	margin-right: 10%;
+	margin-top: 10px;
+
+	border-style: solid;;
+	border-width: 2px;
+	border-color: #323232;
 }
 
 .Projects {
@@ -49,23 +76,35 @@ a {
 .ProjectContainer {
 	display: inline-grid;
   	grid-template-columns: auto auto;
-  	background-color: #2e3131;
-  	padding: 10px;
-  	height: 330px;
-  	margin: 10px;
+
+  	background-color: #3b4252;
+
+  	margin-top: 10px;
+
+  	border-style: solid;;
+	border-width: 2px;
+	border-color: #d8dee9;
+}
+
+#OtherProjectContainer {
+	grid-template-columns: 50% 50%;
 }
 
 .ProjectBox {
-	width: 75%;
+	margin-left:10px
 }
 
-.ProjectContent {
-	margin: auto;
+#OtherProjectBox {
+	border-right-style: solid;
+	border-width: 1px;
+	border-color: #d8dee9;
 }
 
-.OtherProjectContainer {
-	display: inline-grid;
-  	grid-template-columns: auto auto;
+#ProjectVideo {
+	display: block;
+	margin: auto auto;
+	width:90%;
+	height:90%;
 }
 
 .OtherProjectBox {
